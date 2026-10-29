@@ -1,0 +1,22 @@
+SlowQuitGuard
+Copyright (C) 2026 SlowQuitGuard contributors
+
+SlowQuitGuard is distributed under the GNU General Public License, version 2
+or (at your option) any later version. See LICENSE for the full terms.
+This program comes with ABSOLUTELY NO WARRANTY, to the extent permitted by law.
+
+Origin and acknowledgments
+--------------------------
+SlowQuitApps: https://github.com/dteoh/SlowQuitApps
+Reference revision: 2c75877c633f5918bdca20e3b3046318632e0d80
+Copyright (C) 2020 Douglas Teoh
+License: GNU General Public License, version 2 or any later version.
+
+SlowQuitGuard is a Swift reimplementation developed with reference to the
+source code and interaction design of SlowQuitApps. Its hold-to-quit behavior
+and implementation were informed by that project. We thank Douglas Teoh and
+all upstream contributors for making their work available as free software.
+
+The Swift reimplementation is dated 2026-10-30. Attribution is also included
+in the README and relevant core source files. The application icon is generated
+by script/generate_icon.swift; upstream icon assets are not included.

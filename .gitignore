@@ -1,0 +1,26 @@
+# Only public source, tests, app metadata and build scripts belong here.
+/*
+!/.gitignore
+!/LICENSE
+!/NOTICE
+!/README.md
+!/Package.swift
+!/Sources/
+!/Tests/
+!/Resources/
+!/script/
+
+/Sources/**
+!/Sources/**/
+!/Sources/**/*.swift
+/Tests/**
+!/Tests/**/
+!/Tests/**/*.swift
+/Resources/**
+!/Resources/Info.plist
+/script/**
+!/script/build_and_run.sh
+!/script/test.sh
+!/script/generate_icon.swift
+
+**/.DS_Store
