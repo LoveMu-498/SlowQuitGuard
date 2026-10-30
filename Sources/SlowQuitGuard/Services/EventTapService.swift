@@ -29,6 +29,7 @@ final class EventTapService: @unchecked Sendable {
     private var machine = HoldStateMachine()
     private var originalQuitEvent: CGEvent?
     private var recovery = RecoveryBackoff()
+    private var feedbackRecorder = HoldFeedbackRecorder()
     private var snapshot = ServiceSnapshot()
     private var lastPublished: ServiceSnapshot?
     private var stableSince: Double?
@@ -130,7 +131,7 @@ final class EventTapService: @unchecked Sendable {
         else { blocked = nil }
 
         if let blocked {
-            cancelHold()
+            cancelHold(blocked == .paused || blocked == .sessionInactive ? .cancellation : .failure)
             removeTap()
             recovery.reset()
             snapshot.state = blocked
@@ -153,7 +154,7 @@ final class EventTapService: @unchecked Sendable {
             return
         }
 
-        cancelHold()
+        cancelHold(.failure)
         let wasExistingTap = tap != nil
         if let tap, CFMachPortIsValid(tap) {
             CGEvent.tapEnable(tap: tap, enable: true)
@@ -215,7 +216,7 @@ final class EventTapService: @unchecked Sendable {
 
     fileprivate func receive(type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
         if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
-            cancelHold()
+            cancelHold(.failure)
             machine.connectionInterrupted()
             stableSince = nil
             pendingRecoveryReason = type == .tapDisabledByTimeout ? "监听超时后恢复" : "系统停用监听后恢复"
@@ -249,16 +250,18 @@ final class EventTapService: @unchecked Sendable {
             enabled: policy.enabled && policy.sessionActive && snapshot.state == .ready,
             duration: policy.duration)
         if before != machine.hold {
+            if machine.hold == nil { recordFeedback(.cancellation, session: before) }
             originalQuitEvent = machine.hold == nil ? nil : event.copy()
             updateHoldPresentation()
         }
         return suppress ? nil : Unmanaged.passUnretained(event)
     }
 
-    private func updateHoldPresentation(completed: HoldSession? = nil) {
+    private func updateHoldPresentation(completed: HoldSession? = nil, failed: HoldSession? = nil) {
         if let holdTimer { CFRunLoopTimerInvalidate(holdTimer) }
         holdTimer = nil
         if let hold = machine.hold { snapshot.holdPresentation = .holding(hold) }
+        else if let failed { snapshot.holdPresentation = .failed(failed, stoppedAt: Self.now) }
         else { snapshot.holdPresentation = completed.map(HoldPresentation.completed) }
         if machine.hold != nil {
             holdTimer = CFRunLoopTimerCreateWithHandler(nil, CFAbsoluteTimeGetCurrent() + 1.0 / 60, 1.0 / 60, 0, 0) { [self] _ in
@@ -269,12 +272,22 @@ final class EventTapService: @unchecked Sendable {
         publish()
     }
 
-    private func cancelHold() {
+    private func cancelHold(_ outcome: HoldFeedbackKind = .cancellation) {
+        let session = machine.hold
+        recordFeedback(outcome, session: session)
         machine.cancel()
         originalQuitEvent = nil
         if let holdTimer { CFRunLoopTimerInvalidate(holdTimer) }
         holdTimer = nil
-        snapshot.holdPresentation = nil
+        if outcome == .failure, let session {
+            snapshot.holdPresentation = .failed(session, stoppedAt: Self.now)
+        } else { snapshot.holdPresentation = nil }
+    }
+
+    private func recordFeedback(_ kind: HoldFeedbackKind, session: HoldSession?) {
+        if let feedback = feedbackRecorder.record(kind, for: session, at: Self.now) {
+            snapshot.feedback = feedback
+        }
     }
 
     private func reconcilePhysicalRelease() {
@@ -297,7 +310,8 @@ final class EventTapService: @unchecked Sendable {
         let operational = policy.enabled && policy.sessionActive && snapshot.state == .ready &&
             policy.target?.identity == hold.target.identity
         guard operational, physicallyHeld else {
-            cancelHold()
+            let interrupted = policy.enabled && policy.sessionActive && snapshot.state != .ready
+            cancelHold(interrupted ? .failure : .cancellation)
             if !CGEventSource.keyState(.hidSystemState, key: hold.keyCode) {
                 machine.observePhysicalRelease(of: hold.keyCode)
             }
@@ -332,7 +346,11 @@ final class EventTapService: @unchecked Sendable {
             logger.info("A normal quit shortcut was sent to the captured application.")
         }
         originalQuitEvent = nil
-        updateHoldPresentation(completed: sentSession)
+        let stillIntended = currentPolicy == policy && shortcutIsHeld(hold.keyCode) &&
+            CurrentApplication.target()?.identity == hold.target.identity
+        let failed = !healthy || (approval != nil && sentSession == nil && stillIntended)
+        recordFeedback(sentSession != nil ? .success : (failed ? .failure : .cancellation), session: hold)
+        updateHoldPresentation(completed: sentSession, failed: failed ? hold : nil)
         if !healthy { refresh() }
     }
 

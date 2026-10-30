@@ -13,33 +13,33 @@ struct PresentationTests {
 
     @Test func continuousProgressUsesPresentationFramesAndDoesNotRestart() async throws {
         _ = NSApplication.shared
-        let track = HoldProgressTrack(frame: NSRect(x: 0, y: 0, width: 320, height: 6))
-        let window = PreviewPanel(contentRect: NSRect(x: -10000, y: -10000, width: 320, height: 6),
+        let track = HoldRingTrack(frame: NSRect(x: 0, y: 0, width: 96, height: 96))
+        let window = PreviewPanel(contentRect: NSRect(x: -10000, y: -10000, width: 96, height: 96),
             styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         window.contentView = track
         window.orderFrontRegardless()
         defer { window.orderOut(nil) }
         let session = HoldSession(target: Self.target, keyCode: 12, startedAt: Self.now, duration: 2)
-        track.configure(session: session, completed: false)
+        track.configure(session: session, phase: .holding)
         CATransaction.flush()
         try await Task.sleep(for: .milliseconds(150))
         let first = track.displayedProgress
-        track.configure(session: session, completed: false)
+        track.configure(session: session, phase: .holding)
         try await Task.sleep(for: .milliseconds(200))
         let second = track.displayedProgress
         #expect(first > 0 && first < 0.5)
         #expect(second > first && second < 0.8)
-        track.configure(session: session, completed: true)
+        track.configure(session: session, phase: .completed)
         CATransaction.flush()
         try await Task.sleep(for: .milliseconds(40))
         #expect(abs(track.displayedProgress - 1) < 0.001)
-        try saveJSON(["first": first, "second": second, "completed": track.displayedProgress], name: "progress-samples.json")
+        try saveJSON(["first": first, "second": second, "completed": track.displayedProgress], name: "ring-progress-samples-0.4.0.json")
     }
 
     @Test func overlayReusesTheHostAndShowsTheCompletedFrame() async throws {
         _ = NSApplication.shared
         let overlay = HoldOverlayController(screenFrame: NSRect(x: -10000, y: -10000, width: 600, height: 400))
-        defer { overlay.present(nil) }
+        defer { overlay.dismissImmediately() }
         let first = HoldSession(target: Self.target, keyCode: 12, startedAt: Self.now, duration: 2)
         overlay.present(.holding(first))
         try await Task.sleep(for: .milliseconds(150))
@@ -49,7 +49,7 @@ struct PresentationTests {
         #expect(overlay.hostingView === initialHost)
         overlay.present(.completed(first))
         #expect(overlay.isVisible)
-        try await Task.sleep(for: .milliseconds(300))
+        try await Task.sleep(for: .milliseconds(400))
         #expect(!overlay.isVisible)
         let next = HoldSession(target: Self.target, keyCode: 12, startedAt: Self.now, duration: 1)
         overlay.present(.holding(next))

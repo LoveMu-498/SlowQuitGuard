@@ -11,6 +11,10 @@ struct GuardSettingsView: View {
             applicationSettings
                 .tabItem { Label("应用保护", systemImage: "checkmark.square") }
                 .tag(GuardSettingsTab.applications)
+            SoundSettingsView(preferences: Binding(get: { model.soundSettings.preferences },
+                set: { model.soundSettings.preferences = $0 }), preview: model.previewSound)
+                .tabItem { Label("声音", systemImage: "speaker.wave.2") }
+                .tag(GuardSettingsTab.sounds)
         }
         .frame(minWidth: 680, idealWidth: 840, minHeight: 500, idealHeight: 620)
         .background(SettingsWindowAnchor(presenter: model.settingsWindow).frame(width: 0, height: 0))

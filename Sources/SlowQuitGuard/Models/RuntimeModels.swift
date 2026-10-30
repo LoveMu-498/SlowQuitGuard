@@ -66,6 +66,7 @@ struct ServiceSnapshot: Equatable, Sendable {
     var revision: UInt64 = 0
     var state: ProtectionState = .starting
     var holdPresentation: HoldPresentation?
+    var feedback: HoldFeedback?
     var accessibilityGranted = false
     var postingGranted = false
     var listeningGranted = false
@@ -79,6 +80,7 @@ struct ServiceSnapshot: Equatable, Sendable {
 enum HoldPresentation: Equatable, Sendable {
     case holding(HoldSession)
     case completed(HoldSession)
+    case failed(HoldSession, stoppedAt: Double)
 }
 
 enum PermissionStage: Equatable {
@@ -86,7 +88,7 @@ enum PermissionStage: Equatable {
 }
 
 enum GuardSettingsTab: Hashable {
-    case general, applications
+    case general, applications, sounds
 }
 
 enum CurrentApplication {

@@ -26,6 +26,8 @@ final class ProtectionModel {
     private(set) var menuTargetIsPrevious = false
     private(set) var runningApplications: [RunningApplicationItem] = []
     let permissions = PermissionCoordinator.live()
+    let soundSettings = SoundSettingsStore.live()
+    @ObservationIgnored private let feedbackSounds = FeedbackSoundService.live()
     @ObservationIgnored let settingsWindow = SettingsWindowPresenter()
     var settingsTab: GuardSettingsTab = .general
     private var rules: ApplicationProtectionRules
@@ -87,6 +89,8 @@ final class ProtectionModel {
                     self.permissions.setInputMonitoringRequired(false)
                 } else { self.permissions.refresh() }
                 self.overlay.present(value.holdPresentation)
+                let now = Double(DispatchTime.now().uptimeNanoseconds) / 1_000_000_000
+                self.feedbackSounds.handle(value.feedback, preferences: self.soundSettings.preferences, now: now)
             }
         }
         service = worker
@@ -140,13 +144,16 @@ final class ProtectionModel {
         menuBeginObserver = nil
         permissions.guideDidClose()
         permissions.onRefreshProtection = nil
-        overlay.present(nil)
+        overlay.dismissImmediately()
+        feedbackSounds.stop()
     }
 
     func repairProtection() {
         permissions.refresh(advance: false)
         service?.reconnect()
     }
+
+    func previewSound(_ preference: FeedbackSoundPreference) { feedbackSounds.preview(preference) }
 
     func prepareMenu() {
         updateApplications()

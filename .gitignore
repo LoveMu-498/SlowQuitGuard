@@ -1,4 +1,4 @@
-# Only public source, tests, app metadata and build scripts belong here.
+# Only reviewed source, resources and documentation assets belong here.
 /*
 !/.gitignore
 !/LICENSE
@@ -18,9 +18,20 @@
 !/Tests/**/*.swift
 /Resources/**
 !/Resources/Info.plist
+!/Resources/Sounds/
+!/Resources/Sounds/softRise.wav
+!/Resources/Sounds/softTap.wav
+!/Resources/Sounds/lowDouble.wav
 /script/**
 !/script/build_and_run.sh
 !/script/test.sh
 !/script/generate_icon.swift
+!/script/generate_feedback_sounds.py
+
+!/assets/
+/assets/**
+!/assets/screenshots/
+!/assets/screenshots/hold-to-quit.png
+!/assets/screenshots/sound-settings.png
 
 **/.DS_Store

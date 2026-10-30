@@ -64,6 +64,10 @@ mkdir -p "$APP_BUNDLE/Contents/MacOS" "$APP_BUNDLE/Contents/Resources"
 cp "$BIN_DIR/$APP_NAME" "$APP_BUNDLE/Contents/MacOS/$APP_NAME"
 chmod +x "$APP_BUNDLE/Contents/MacOS/$APP_NAME"
 cp "$ROOT_DIR/Resources/Info.plist" "$APP_BUNDLE/Contents/Info.plist"
+mkdir -p "$APP_BUNDLE/Contents/Resources/Sounds"
+for cue in softRise softTap lowDouble; do
+  cp "$ROOT_DIR/Resources/Sounds/$cue.wav" "$APP_BUNDLE/Contents/Resources/Sounds/$cue.wav"
+done
 
 ICON_SET="$ROOT_DIR/.build/SlowQuitGuard.iconset"
 xcrun swift -module-cache-path "$ROOT_DIR/.build/ModuleCache" "$ROOT_DIR/script/generate_icon.swift" "$ICON_SET"
