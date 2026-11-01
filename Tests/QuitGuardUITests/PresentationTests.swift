@@ -33,7 +33,7 @@ struct PresentationTests {
         CATransaction.flush()
         try await Task.sleep(for: .milliseconds(40))
         #expect(abs(track.displayedProgress - 1) < 0.001)
-        try saveJSON(["first": first, "second": second, "completed": track.displayedProgress], name: "ring-progress-samples-0.4.0.json")
+        try saveJSON(["first": first, "second": second, "completed": track.displayedProgress], name: "ring-progress-samples-0.4.1.json")
     }
 
     @Test func overlayReusesTheHostAndShowsTheCompletedFrame() async throws {
@@ -49,7 +49,10 @@ struct PresentationTests {
         #expect(overlay.hostingView === initialHost)
         overlay.present(.completed(first))
         #expect(overlay.isVisible)
-        try await Task.sleep(for: .milliseconds(400))
+        let deadline = Self.now + 2
+        while overlay.isVisible, Self.now < deadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
         #expect(!overlay.isVisible)
         let next = HoldSession(target: Self.target, keyCode: 12, startedAt: Self.now, duration: 1)
         overlay.present(.holding(next))
@@ -58,15 +61,19 @@ struct PresentationTests {
         #expect(overlay.hostingView === initialHost)
     }
 
-    @Test func quickCancelledPressNeverFlashesTheOverlay() async throws {
+    @Test func aShortPressShowsImmediatelyAndReleaseHidesImmediately() async throws {
         _ = NSApplication.shared
         let overlay = HoldOverlayController(screenFrame: NSRect(x: -10000, y: -10000, width: 600, height: 400))
+        defer { overlay.dismissImmediately() }
         let session = HoldSession(target: Self.target, keyCode: 12, startedAt: Self.now, duration: 1)
         overlay.present(.holding(session))
+        #expect(overlay.isVisible)
+        #expect(overlay.hostingView != nil)
         overlay.present(nil)
+        #expect(!overlay.isVisible)
         try await Task.sleep(for: .milliseconds(150))
         #expect(!overlay.isVisible)
-        #expect(overlay.hostingView == nil)
+        #expect(overlay.hostingView != nil)
     }
 
     @Test func permissionAndApplicationScreensRenderWithoutStartingProtection() async throws {

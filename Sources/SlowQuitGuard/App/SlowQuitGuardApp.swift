@@ -50,6 +50,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         permissionGuide?.close()
     }
     func applicationDidBecomeActive(_ notification: Notification) {
+        model.loginItem.refresh()
         if model.permissions.guideVisible { model.permissions.refresh() }
     }
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }

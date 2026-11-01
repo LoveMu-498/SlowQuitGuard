@@ -10,17 +10,22 @@ struct SoundSettingsView: View {
             ForEach(HoldFeedbackKind.allCases, id: \.self) { kind in
                 Section {
                     Toggle("播放提示音", isOn: binding(kind, \.enabled))
+                        .accessibilityLabel(kind.title + "提示音开关")
                     Picker("声音", selection: binding(kind, \.tone)) {
                         ForEach(FeedbackTone.allCases, id: \.self) { tone in
                             Text(tone.title).tag(tone)
                         }
                     }
+                    .accessibilityLabel(kind.title + "提示音声音")
                     HStack(spacing: 12) {
                         Slider(value: binding(kind, \.volume), in: 0...1) { Text("音量") }
+                            .accessibilityLabel(kind.title + "提示音音量")
+                            .accessibilityValue(preferences[kind].volume.formatted(.percent.precision(.fractionLength(0))))
                         Text(preferences[kind].volume.formatted(.percent.precision(.fractionLength(0))))
                             .monospacedDigit().frame(width: 46, alignment: .trailing)
                         Button("试听") { preview(preferences[kind]) }
                             .disabled(preferences[kind].volume == 0)
+                            .accessibilityLabel("试听" + kind.title + "提示音")
                     }
                     .accessibilityElement(children: .contain)
                     .accessibilityLabel(kind.title + "音量和试听")

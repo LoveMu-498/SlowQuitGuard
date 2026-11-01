@@ -55,9 +55,20 @@ final class PermissionCoordinator {
     }
 
     func refresh(advance: Bool = true) {
-        let previous = access.nextRequirement
         var fresh = readAccess()
         fresh.inputMonitoringRequired = needsInputMonitoring
+        apply(fresh, advance: advance, reconnect: true)
+    }
+
+    func acceptRuntimeAccess(_ fresh: PermissionAccess, inputMonitoringRequired: Bool? = nil) {
+        if let inputMonitoringRequired { needsInputMonitoring = inputMonitoringRequired }
+        var fresh = fresh
+        fresh.inputMonitoringRequired = needsInputMonitoring
+        apply(fresh, advance: true, reconnect: false)
+    }
+
+    private func apply(_ fresh: PermissionAccess, advance: Bool, reconnect: Bool) {
+        let previous = access.nextRequirement
         access = fresh
         switch fresh.nextRequirement {
         case .accessibility: stage = .accessibility
@@ -68,7 +79,7 @@ final class PermissionCoordinator {
         if previous != fresh.nextRequirement {
             lastCheckStillMissing = false
             if guideVisible { onPresentGuide?() }
-            if fresh.nextRequirement == nil { onRefreshProtection?() }
+            if reconnect, fresh.nextRequirement == nil { onRefreshProtection?() }
         }
         if advance && guideVisible, let next = progression.automaticRequest(for: fresh) {
             requestAccess(next)

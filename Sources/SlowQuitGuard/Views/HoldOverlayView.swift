@@ -85,12 +85,17 @@ private struct RemainingHoldTime: View {
     var body: some View {
         TimelineView(.animation(minimumInterval: 0.1)) { _ in
             let now = Double(DispatchTime.now().uptimeNanoseconds) / 1_000_000_000
-            (Text("按住 ⌘Q · ") +
-             Text("剩余 " + session.remaining(at: now).formatted(.number.precision(.fractionLength(1))) + " 秒")
-                .foregroundColor(.blue))
-                .font(.system(size: 15, weight: .medium))
-                .monospacedDigit()
-                .fixedSize(horizontal: false, vertical: true)
+            let tenths = session.remainingTenths(at: now)
+            Group {
+                if tenths > 0 {
+                    (Text("按住 ⌘Q · ") +
+                     Text("剩余 " + (Double(tenths) / 10).formatted(.number.precision(.fractionLength(1))) + " 秒")
+                        .foregroundColor(.blue))
+                } else { Text("正在处理退出请求…") }
+            }
+            .font(.system(size: 15, weight: .medium))
+            .monospacedDigit()
+            .fixedSize(horizontal: false, vertical: true)
         }
     }
 }

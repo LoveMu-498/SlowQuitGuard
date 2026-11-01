@@ -7,10 +7,11 @@ struct HoldProgressRing: NSViewRepresentable {
     let session: HoldSession?
     let phase: HoldOverlayPhase
     let stoppedAt: Double?
+    @Environment(\.colorSchemeContrast) private var contrast
 
     func makeNSView(context: Context) -> HoldRingTrack { HoldRingTrack() }
     func updateNSView(_ view: HoldRingTrack, context: Context) {
-        view.configure(session: session, phase: phase, stoppedAt: stoppedAt)
+        view.configure(session: session, phase: phase, stoppedAt: stoppedAt, increasedContrast: contrast == .increased)
     }
 }
 
@@ -22,6 +23,7 @@ final class HoldRingTrack: NSView {
     private var phase: HoldOverlayPhase = .holding
     private var stoppedAt: Double?
     private var lastSize = CGSize.zero
+    private var increasedContrast = false
     private let lineWidth: CGFloat = 10
 
     override var isFlipped: Bool { true }
@@ -42,8 +44,17 @@ final class HoldRingTrack: NSView {
 
     required init?(coder: NSCoder) { return nil }
 
-    func configure(session: HoldSession?, phase: HoldOverlayPhase, stoppedAt: Double? = nil) {
-        guard session != self.session || phase != self.phase || stoppedAt != self.stoppedAt else { return }
+    func configure(session: HoldSession?, phase: HoldOverlayPhase, stoppedAt: Double? = nil, increasedContrast: Bool = false) {
+        let progressChanged = session != self.session || phase != self.phase || stoppedAt != self.stoppedAt
+        let contrastChanged = self.increasedContrast != increasedContrast
+        self.increasedContrast = increasedContrast
+        if contrastChanged, !progressChanged {
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            updateColors()
+            CATransaction.commit()
+        }
+        guard progressChanged else { return }
         self.session = session
         self.phase = phase
         self.stoppedAt = stoppedAt
@@ -67,8 +78,7 @@ final class HoldRingTrack: NSView {
 
     private func updateColors() {
         effectiveAppearance.performAsCurrentDrawingAppearance {
-            let contrast = NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast
-            track.strokeColor = NSColor.labelColor.withAlphaComponent(contrast ? 0.38 : 0.14).cgColor
+            track.strokeColor = NSColor.labelColor.withAlphaComponent(increasedContrast ? 0.38 : 0.14).cgColor
             let color: NSColor = phase == .completed ? .systemGreen : (phase == .failed ? .systemOrange : .systemBlue)
             fill.strokeColor = color.cgColor
         }
@@ -76,6 +86,15 @@ final class HoldRingTrack: NSView {
 
     override func accessibilityValue() -> Any? {
         NSNumber(value: phase == .completed ? 1 : session?.progress(at: stoppedAt ?? Self.now) ?? 0)
+    }
+    override func accessibilityMinValue() -> Any? { NSNumber(value: 0) }
+    override func accessibilityMaxValue() -> Any? { NSNumber(value: 1) }
+
+    override func viewDidChangeBackingProperties() {
+        super.viewDidChangeBackingProperties()
+        let scale = window?.backingScaleFactor ?? 1
+        track.contentsScale = scale
+        fill.contentsScale = scale
     }
 
     var displayedProgress: Double { Double((fill.presentation() ?? fill).strokeEnd) }

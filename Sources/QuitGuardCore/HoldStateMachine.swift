@@ -72,6 +72,12 @@ public struct HoldSession: Equatable, Sendable {
     public func remaining(at now: Double) -> Double {
         max(0, duration - max(0, now - startedAt))
     }
+
+    public func remainingTenths(at now: Double) -> Int {
+        let seconds = remaining(at: now)
+        guard seconds > 0 else { return 0 }
+        return max(1, Int((seconds * 10 - 0.0000001).rounded(.up)))
+    }
 }
 
 public struct HoldStateMachine: Sendable {

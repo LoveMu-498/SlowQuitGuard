@@ -68,27 +68,37 @@ struct HoldOverlayVisualTests {
             for dark in [false, true] {
                 let value = model(name: "Google Chrome", phase: phase)
                 try await render(HoldOverlayView(model: value),
-                    name: "island-\(label)-\(dark ? "dark" : "light")-0.4.0", dark: dark)
+                    name: "island-\(label)-\(dark ? "dark" : "light")-0.4.1", dark: dark)
             }
         }
         try await render(HoldOverlayView(model: model(name: "Google Chrome"), reduceTransparencyOverride: true),
-            name: "island-reduced-transparency-0.4.0")
+            name: "island-reduced-transparency-0.4.1")
         try await render(HoldOverlayView(model: model(name: "这是用于核对完整应用名称换行的较长应用名称，不应被省略号截断")),
-            name: "island-long-name-0.4.0")
+            name: "island-long-name-0.4.1")
         try await render(SoundSettingsView(preferences: .constant(.init()), preview: { _ in }),
-            size: NSSize(width: 840, height: 620), name: "sound-settings-light-0.4.0")
+            size: NSSize(width: 840, height: 620), name: "sound-settings-light-0.4.1")
+        for reason in [ShortcutReason.unprotectedApplication, .releasedEarly, .listenerInterrupted, .requestSent] {
+            var snapshot = ServiceSnapshot()
+            snapshot.state = .ready
+            snapshot.tapEnabled = true
+            snapshot.lastShortcut = .init(reason: reason, occurredAt: Date(), applicationName: "Google Chrome")
+            try await render(Form {
+                ProtectionDiagnosticsView(report: .init(version: "0.4.1", state: .ready,
+                    snapshot: snapshot, mode: "默认保护（黑名单）"), copy: { _ in })
+            }.formStyle(.grouped), size: NSSize(width: 840, height: 360), name: "shortcut-" + reason.rawValue + "-0.4.1")
+        }
         var quiet = FeedbackPreferences()
         quiet.cancellation.enabled = false
         quiet.failure.volume = 0
         try await render(SoundSettingsView(preferences: .constant(quiet), preview: { _ in }),
-            size: NSSize(width: 840, height: 620), name: "sound-settings-dark-0.4.0", dark: true)
+            size: NSSize(width: 840, height: 620), name: "sound-settings-dark-0.4.1", dark: true)
     }
 
     private func model(name: String, phase: HoldOverlayPhase = .holding) -> HoldOverlayModel {
         let value = HoldOverlayModel()
-        value.session = session(name: name, elapsed: phase == .completed ? 1 : 0.55)
+        value.session = session(name: name, duration: 3, elapsed: phase == .completed ? 3 : 1.5)
         value.phase = phase
-        value.stoppedAt = phase == .failed ? value.session!.startedAt + 0.55 : nil
+        value.stoppedAt = phase == .failed ? value.session!.startedAt + 1.65 : nil
         value.visible = true
         if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.google.Chrome") {
             value.targetIcon = NSWorkspace.shared.icon(forFile: url.path)
@@ -112,16 +122,16 @@ struct HoldOverlayVisualTests {
                                    : NSPoint(x: -10000, y: -10000)
         let window = OverlayPreviewPanel(contentRect: NSRect(origin: origin, size: chosenSize),
             styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
-        window.level = .floating
+        window.level = nativeCapture ? .screenSaver : .floating
         window.ignoresMouseEvents = true
         window.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
         var documentWindow: OverlayPreviewPanel?
         if nativeCapture && size == nil {
-            // Known backdrops inside and behind the owned capture window keep
-            // native material samples independent of the user's desktop.
+            // Known backdrops inside and behind the owned window keep
+            // material samples independent of the user's desktop.
             let document = OverlayPreviewPanel(contentRect: NSRect(origin: origin, size: chosenSize).insetBy(dx: -40, dy: -40),
                 styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
-            document.level = .floating
+            document.level = window.level
             document.ignoresMouseEvents = true
             document.appearance = window.appearance
             document.contentView = OverlayDocumentBackdrop(frame: NSRect(origin: .zero, size: document.frame.size))
@@ -145,8 +155,8 @@ struct HoldOverlayVisualTests {
         if nativeCapture {
             let process = Process()
             process.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
-            // A screen rectangle can include system notifications above the
-            // preview. Capture only this owned window to keep other UI private.
+            // Capture only the owned window; notifications or other apps must
+            // never appear in documentation screenshots.
             let prefix = size == nil ? "native-context-" : "native-"
             process.arguments = ["-x", "-o", "-l\(window.windowNumber)",
                 output.appendingPathComponent(prefix + name + ".png").path]

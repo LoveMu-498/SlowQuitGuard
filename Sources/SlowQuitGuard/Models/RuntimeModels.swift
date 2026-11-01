@@ -8,6 +8,7 @@ struct RuntimePolicy: Equatable, Sendable {
     var sessionActive: Bool
     var target: QuitTarget?
     var qKeyCodes: Set<UInt16>
+    var unprotectedTarget: QuitTarget? = nil
 }
 
 enum ProtectionState: Equatable, Sendable {
@@ -67,6 +68,7 @@ struct ServiceSnapshot: Equatable, Sendable {
     var state: ProtectionState = .starting
     var holdPresentation: HoldPresentation?
     var feedback: HoldFeedback?
+    var lastShortcut: ShortcutDiagnostic?
     var accessibilityGranted = false
     var postingGranted = false
     var listeningGranted = false

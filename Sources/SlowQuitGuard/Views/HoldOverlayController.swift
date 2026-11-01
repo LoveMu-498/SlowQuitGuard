@@ -10,12 +10,37 @@ final class HoldOverlayController {
     private var displayTask: Task<Void, Never>?
     private var generation = 0
     private let screenFrame: NSRect?
+    private let screenForTarget: @MainActor (QuitTarget) -> NSRect?
+    private var anchoredScreenFrame: NSRect?
+    private var cachedIconTarget: ApplicationIdentity?
+    private var cachedIcon: NSImage?
+    private var iconTask: Task<Void, Never>?
     private let model = HoldOverlayModel()
     private(set) var hostingView: NSHostingView<HoldOverlayView>?
 
-    init(screenFrame: NSRect? = nil) { self.screenFrame = screenFrame }
+    init(screenFrame: NSRect? = nil,
+         screenForTarget: @escaping @MainActor (QuitTarget) -> NSRect? = OverlayScreenResolver.visibleFrame) {
+        self.screenFrame = screenFrame
+        self.screenForTarget = screenForTarget
+    }
 
     var isVisible: Bool { panel?.isVisible == true }
+    var displayedFrame: NSRect? { panel?.frame }
+
+    func warmUp() {
+        if panel == nil { _ = makePanel() }
+        hostingView?.layoutSubtreeIfNeeded()
+    }
+
+    func prepareTarget(_ target: QuitTarget?) {
+        guard let target, target.identity != cachedIconTarget else { return }
+        cachedIconTarget = target.identity
+        cachedIcon = NSRunningApplication(processIdentifier: target.identity.processID)?.icon
+        if cachedIcon == nil, let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: target.identity.bundleID) {
+            cachedIcon = NSWorkspace.shared.icon(forFile: url.path)
+        }
+        if model.session?.target.identity == target.identity { model.targetIcon = cachedIcon }
+    }
 
     func present(_ value: HoldPresentation?) {
         guard value != presentation else { return }
@@ -30,11 +55,7 @@ final class HoldOverlayController {
         case let .holding(session):
             prepare(session, phase: .holding)
             if isVisible { updatePanelGeometry(); return }
-            displayTask = Task { @MainActor [weak self] in
-                try? await Task.sleep(for: .milliseconds(80))
-                guard !Task.isCancelled, let self, self.generation == token else { return }
-                self.showPanel()
-            }
+            showPanel()
         case let .completed(session):
             prepare(session, phase: .completed)
             showPanel()
@@ -45,8 +66,7 @@ final class HoldOverlayController {
             showPanel()
             dismiss(after: .milliseconds(1000), token: token)
         case nil:
-            if isVisible { dismiss(after: .zero, token: token) }
-            else { hideNow() }
+            hideNow()
         }
     }
 
@@ -57,11 +77,16 @@ final class HoldOverlayController {
     }
 
     private func prepare(_ session: HoldSession, phase: HoldOverlayPhase) {
-        if model.session?.target.identity != session.target.identity {
-            model.targetIcon = NSRunningApplication(processIdentifier: session.target.identity.processID)?.icon
-            if model.targetIcon == nil,
-               let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: session.target.identity.bundleID) {
-                model.targetIcon = NSWorkspace.shared.icon(forFile: url.path)
+        if model.session != session {
+            anchoredScreenFrame = screenFrame ?? screenForTarget(session.target)
+        }
+        model.targetIcon = cachedIconTarget == session.target.identity ? cachedIcon : nil
+        if cachedIconTarget != session.target.identity, phase == .holding {
+            iconTask?.cancel()
+            iconTask = Task { @MainActor [weak self] in
+                await Task.yield()
+                guard !Task.isCancelled, let self, self.model.session?.target.identity == session.target.identity else { return }
+                self.prepareTarget(session.target)
             }
         }
         model.session = session
@@ -95,9 +120,7 @@ final class HoldOverlayController {
         hostingView.layoutSubtreeIfNeeded()
         let size = hostingView.fittingSize
         panel.setContentSize(NSSize(width: ceil(size.width), height: ceil(size.height)))
-        let pointer = NSEvent.mouseLocation
-        let screen = NSScreen.screens.first { $0.frame.contains(pointer) } ?? NSScreen.main
-        if let frame = screenFrame ?? screen?.visibleFrame {
+        if let frame = anchoredScreenFrame {
             panel.setFrameOrigin(NSPoint(x: frame.midX - panel.frame.width / 2,
                                          y: frame.midY - panel.frame.height / 2))
         }
@@ -110,6 +133,9 @@ final class HoldOverlayController {
         model.session = nil
         presentation = nil
         displayTask = nil
+        iconTask?.cancel()
+        iconTask = nil
+        anchoredScreenFrame = nil
     }
 
     private func makePanel() -> PassivePanel {

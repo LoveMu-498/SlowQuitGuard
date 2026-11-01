@@ -41,6 +41,8 @@ struct GuardSettingsView: View {
                 Text("SlowQuitGuard")
             }
 
+            LoginItemSettingsSection(controller: model.loginItem)
+
             Section("长按退出") {
                 Toggle("启用防误触保护", isOn: $model.enabled)
                 LabeledContent("按住时长", value: model.durationLabel)
@@ -68,6 +70,10 @@ struct GuardSettingsView: View {
                     }
                 }
             }
+            ProtectionDiagnosticsView(report: .init(
+                version: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "开发构建",
+                state: model.displayState, snapshot: model.snapshot,
+                mode: model.protectionMode == .blacklist ? "默认保护（黑名单）" : "仅保护所选（白名单）"))
             Text("仅保护键盘 ⌘Q。菜单退出、Dock 退出和强制退出仍按系统原有方式工作。")
                 .font(.footnote).foregroundStyle(.secondary)
         }

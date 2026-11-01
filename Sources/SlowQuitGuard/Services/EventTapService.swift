@@ -58,14 +58,14 @@ final class EventTapService: @unchecked Sendable {
         }
         guard changed else { return }
         perform { [self] in
-            cancelHold()
+            cancelHold(reason: cancellationReason(policy: currentPolicy))
             refresh()
         }
     }
 
     func reconnect() {
         perform { [self] in
-            cancelHold()
+            cancelHold(reason: .repairRequested)
             removeTap()
             recovery.reset()
             pendingRecoveryReason = "手动修复保护"
@@ -131,7 +131,9 @@ final class EventTapService: @unchecked Sendable {
         else { blocked = nil }
 
         if let blocked {
-            cancelHold(blocked == .paused || blocked == .sessionInactive ? .cancellation : .failure)
+            let reason: ShortcutReason = blocked == .paused ? .protectionPaused :
+                (blocked == .sessionInactive ? .sessionPaused : (blocked == .secureInput ? .secureInput : .permissionRequired))
+            cancelHold(blocked == .paused || blocked == .sessionInactive ? .cancellation : .failure, reason: reason)
             removeTap()
             recovery.reset()
             snapshot.state = blocked
@@ -250,9 +252,17 @@ final class EventTapService: @unchecked Sendable {
             enabled: policy.enabled && policy.sessionActive && snapshot.state == .ready,
             duration: policy.duration)
         if before != machine.hold {
-            if machine.hold == nil { recordFeedback(.cancellation, session: before) }
+            if machine.hold == nil {
+                recordFeedback(.cancellation, session: before, reason: cancellationReason(policy: policy, input: input))
+            }
             originalQuitEvent = machine.hold == nil ? nil : event.copy()
             updateHoldPresentation()
+        } else if before == nil, !suppress, input.kind == .down, !input.isRepeat,
+                  input.modifiers == [.command], policy.qKeyCodes.contains(keyCode),
+                  !machine.appSwitcherActive, policy.enabled, policy.sessionActive,
+                  snapshot.state == .ready, let target = policy.unprotectedTarget {
+            snapshot.lastShortcut = .init(reason: .unprotectedApplication, occurredAt: Date(), applicationName: target.name)
+            publish()
         }
         return suppress ? nil : Unmanaged.passUnretained(event)
     }
@@ -272,9 +282,9 @@ final class EventTapService: @unchecked Sendable {
         publish()
     }
 
-    private func cancelHold(_ outcome: HoldFeedbackKind = .cancellation) {
+    private func cancelHold(_ outcome: HoldFeedbackKind = .cancellation, reason: ShortcutReason? = nil) {
         let session = machine.hold
-        recordFeedback(outcome, session: session)
+        recordFeedback(outcome, session: session, reason: reason)
         machine.cancel()
         originalQuitEvent = nil
         if let holdTimer { CFRunLoopTimerInvalidate(holdTimer) }
@@ -284,10 +294,22 @@ final class EventTapService: @unchecked Sendable {
         } else { snapshot.holdPresentation = nil }
     }
 
-    private func recordFeedback(_ kind: HoldFeedbackKind, session: HoldSession?) {
+    private func recordFeedback(_ kind: HoldFeedbackKind, session: HoldSession?, reason: ShortcutReason? = nil) {
         if let feedback = feedbackRecorder.record(kind, for: session, at: Self.now) {
             snapshot.feedback = feedback
+            let resolved = reason ?? (kind == .success ? .requestSent : (kind == .failure ? .listenerInterrupted : .releasedEarly))
+            snapshot.lastShortcut = .init(reason: resolved, occurredAt: Date(), applicationName: session?.target.name)
         }
+    }
+
+    private func cancellationReason(policy: RuntimePolicy, input: KeyInput? = nil) -> ShortcutReason {
+        if !policy.enabled { return .protectionPaused }
+        if !policy.sessionActive { return .sessionPaused }
+        if let session = machine.hold, policy.target?.identity != session.target.identity { return .applicationChanged }
+        if let input {
+            return input.kind == .up || !input.modifiers.contains(.command) ? .releasedEarly : .anotherKey
+        }
+        return .settingsChanged
     }
 
     private func reconcilePhysicalRelease() {
@@ -311,7 +333,9 @@ final class EventTapService: @unchecked Sendable {
             policy.target?.identity == hold.target.identity
         guard operational, physicallyHeld else {
             let interrupted = policy.enabled && policy.sessionActive && snapshot.state != .ready
-            cancelHold(interrupted ? .failure : .cancellation)
+            let reason = interrupted ? ShortcutReason.listenerInterrupted :
+                (physicallyHeld ? cancellationReason(policy: policy) : .releasedEarly)
+            cancelHold(interrupted ? .failure : .cancellation, reason: reason)
             if !CGEventSource.keyState(.hidSystemState, key: hold.keyCode) {
                 machine.observePhysicalRelease(of: hold.keyCode)
             }
@@ -321,8 +345,10 @@ final class EventTapService: @unchecked Sendable {
         guard now - hold.startedAt >= hold.duration else { return }
 
         let actualTarget = CurrentApplication.target()
-        let healthy = AXIsProcessTrusted() && CGPreflightPostEventAccess() && !IsSecureEventInputEnabled() &&
-            tap.map { CFMachPortIsValid($0) && CGEvent.tapIsEnabled(tap: $0) } == true
+        let authorized = AXIsProcessTrusted() && CGPreflightPostEventAccess()
+        let secureInput = IsSecureEventInputEnabled()
+        let listening = tap.map { CFMachPortIsValid($0) && CGEvent.tapIsEnabled(tap: $0) } == true
+        let healthy = authorized && !secureInput && listening
         let approval = machine.approveIfDue(now: now, target: actualTarget,
             shortcutStillHeld: shortcutIsHeld(hold.keyCode), enabled: operational && healthy)
         let original = originalQuitEvent
@@ -349,7 +375,11 @@ final class EventTapService: @unchecked Sendable {
         let stillIntended = currentPolicy == policy && shortcutIsHeld(hold.keyCode) &&
             CurrentApplication.target()?.identity == hold.target.identity
         let failed = !healthy || (approval != nil && sentSession == nil && stillIntended)
-        recordFeedback(sentSession != nil ? .success : (failed ? .failure : .cancellation), session: hold)
+        let failureReason: ShortcutReason = !authorized ? .permissionRequired :
+            (secureInput ? .secureInput : (!listening ? .listenerInterrupted : .requestNotSent))
+        let reason: ShortcutReason = sentSession != nil ? .requestSent :
+            (failed ? failureReason : (actualTarget?.identity != hold.target.identity ? .applicationChanged : .releasedEarly))
+        recordFeedback(sentSession != nil ? .success : (failed ? .failure : .cancellation), session: hold, reason: reason)
         updateHoldPresentation(completed: sentSession, failed: failed ? hold : nil)
         if !healthy { refresh() }
     }

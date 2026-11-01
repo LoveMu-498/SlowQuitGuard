@@ -27,6 +27,7 @@ final class ProtectionModel {
     private(set) var runningApplications: [RunningApplicationItem] = []
     let permissions = PermissionCoordinator.live()
     let soundSettings = SoundSettingsStore.live()
+    let loginItem = LoginItemController.live()
     @ObservationIgnored private let feedbackSounds = FeedbackSoundService.live()
     @ObservationIgnored let settingsWindow = SettingsWindowPresenter()
     var settingsTab: GuardSettingsTab = .general
@@ -78,17 +79,18 @@ final class ProtectionModel {
 
     func start() {
         guard service == nil else { return }
+        overlay.warmUp()
         prepareMenu()
         let worker = EventTapService(policy: makePolicy()) { [weak self] value in
             Task { @MainActor [weak self] in
                 guard let self, self.service != nil, value.revision > self.snapshot.revision else { return }
                 self.snapshot = value
-                if value.state == .connectionFailed(checkInputMonitoring: true) {
-                    self.permissions.setInputMonitoringRequired(true)
-                } else if value.state == .ready {
-                    self.permissions.setInputMonitoringRequired(false)
-                } else { self.permissions.refresh() }
                 self.overlay.present(value.holdPresentation)
+                let needsInput: Bool? = value.state == .connectionFailed(checkInputMonitoring: true) ? true :
+                    (value.state == .ready ? false : nil)
+                self.permissions.acceptRuntimeAccess(.init(accessibility: value.accessibilityGranted,
+                    eventPosting: value.postingGranted, inputMonitoring: value.listeningGranted),
+                    inputMonitoringRequired: needsInput)
                 let now = Double(DispatchTime.now().uptimeNanoseconds) / 1_000_000_000
                 self.feedbackSounds.handle(value.feedback, preferences: self.soundSettings.preferences, now: now)
             }
@@ -247,6 +249,7 @@ final class ProtectionModel {
 
     private func updateApplications() {
         frontmostTarget = CurrentApplication.target()
+        overlay.prepareTarget(frontmostTarget)
         if let frontmostTarget { lastExternalTarget = frontmostTarget }
         runningApplications = ApplicationCatalog.running()
         let previous = lastExternalTarget.flatMap { target in
@@ -260,7 +263,8 @@ final class ProtectionModel {
         let protectedTarget = currentAppExcluded ? nil : frontmostTarget
         return RuntimePolicy(enabled: enabled, duration: holdDuration,
                              sessionActive: awake && sessionActive,
-                             target: protectedTarget, qKeyCodes: qKeyCodes)
+                             target: protectedTarget, qKeyCodes: qKeyCodes,
+                             unprotectedTarget: currentAppExcluded ? frontmostTarget : nil)
     }
 
     private func updatePolicy() { service?.updatePolicy(makePolicy()) }
