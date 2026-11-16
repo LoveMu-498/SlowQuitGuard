@@ -11,13 +11,6 @@ struct GuardMenu: View {
 
     @ViewBuilder private var menuContents: some View {
         Text(model.displayState.title)
-        if case .ready = model.displayState {
-            if model.currentAppExcluded {
-                Text("当前应用不启用长按保护")
-            } else {
-                Text("按住 ⌘Q " + model.durationLabel + "退出")
-            }
-        }
         Divider()
         Toggle("启用防误触保护", isOn: $model.enabled)
 
@@ -38,6 +31,8 @@ struct GuardMenu: View {
             Toggle("为此应用开启防误触保护", isOn: protectionBinding(app.identity.bundleID))
             if !model.isProtected(app.identity.bundleID) {
                 Text("⌘Q 交给应用原有功能处理")
+            } else if case .ready = model.displayState {
+                Text("按住 ⌘Q " + model.durationLabel(for: app.identity.bundleID) + "退出")
             }
         }
         Menu("正在运行的应用") {

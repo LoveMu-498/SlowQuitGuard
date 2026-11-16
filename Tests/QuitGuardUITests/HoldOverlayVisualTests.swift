@@ -10,9 +10,10 @@ import Testing
 @MainActor
 struct HoldOverlayVisualTests {
     private var now: Double { Double(DispatchTime.now().uptimeNanoseconds) / 1_000_000_000 }
-    private func session(name: String = "Google Chrome", duration: Double = 1, elapsed: Double = 0) -> HoldSession {
+    private func session(name: String = "Google Chrome", duration: Double = 1, elapsed: Double = 0,
+                         globalDuration: Double? = nil) -> HoldSession {
         .init(target: .init(identity: .init(processID: 123, bundleID: "com.google.Chrome"), name: name),
-              keyCode: 12, startedAt: now - elapsed, duration: duration)
+              keyCode: 12, startedAt: now - elapsed, duration: duration, globalDuration: globalDuration)
     }
 
     @Test func anInterruptedRingFreezesInsteadOfReachingSuccess() async throws {
@@ -75,7 +76,8 @@ struct HoldOverlayVisualTests {
             name: "island-reduced-transparency-0.4.1")
         try await render(HoldOverlayView(model: model(name: "这是用于核对完整应用名称换行的较长应用名称，不应被省略号截断")),
             name: "island-long-name-0.4.1")
-        try await render(SoundSettingsView(preferences: .constant(.init()), preview: { _ in }),
+        try await render(SoundSettingsView(preferences: .constant(.init()), preview: { _ in },
+            previewEncouragement: {}, previewDurationCue: { _ in }),
             size: NSSize(width: 840, height: 620), name: "sound-settings-light-0.4.1")
         for reason in [ShortcutReason.unprotectedApplication, .releasedEarly, .listenerInterrupted, .requestSent] {
             var snapshot = ServiceSnapshot()
@@ -88,10 +90,31 @@ struct HoldOverlayVisualTests {
             }.formStyle(.grouped), size: NSSize(width: 840, height: 360), name: "shortcut-" + reason.rawValue + "-0.4.1")
         }
         var quiet = FeedbackPreferences()
+        quiet.encouragementEnabled = true
+        quiet.encouragementVolume = 0.43
         quiet.cancellation.enabled = false
         quiet.failure.volume = 0
-        try await render(SoundSettingsView(preferences: .constant(quiet), preview: { _ in }),
+        try await render(SoundSettingsView(preferences: .constant(quiet), preview: { _ in },
+            previewEncouragement: {}, previewDurationCue: { _ in }),
             size: NSSize(width: 840, height: 620), name: "sound-settings-dark-0.4.1", dark: true)
+        try await render(SoundSettingsView(preferences: .constant(quiet), preview: { _ in },
+            previewEncouragement: {}, previewDurationCue: { _ in }),
+            size: NSSize(width: 680, height: 500), name: "sound-settings-compact-0.4.4", dark: true)
+    }
+
+    @Test func appDurationsRenderInLightAndDark() async throws {
+        _ = NSApplication.shared
+        for (name, id, label, seconds) in [("计算器", "com.apple.calculator", "shorter", 0.6),
+                                           ("文本编辑", "com.apple.TextEdit", "longer", 2.5)] {
+            for dark in [false, true] {
+                let value = model(name: name)
+                value.session = session(name: name, duration: seconds, elapsed: 0.15, globalDuration: 1)
+                value.targetIcon = NSWorkspace.shared.urlForApplication(withBundleIdentifier: id)
+                    .map { NSWorkspace.shared.icon(forFile: $0.path) }
+                try await render(HoldOverlayView(model: value, reduceTransparencyOverride: true),
+                    name: "hold-\(label)-\(dark ? "dark" : "light")", dark: dark)
+            }
+        }
     }
 
     private func model(name: String, phase: HoldOverlayPhase = .holding) -> HoldOverlayModel {
@@ -128,7 +151,7 @@ struct HoldOverlayVisualTests {
         var documentWindow: OverlayPreviewPanel?
         if nativeCapture && size == nil {
             // Known backdrops inside and behind the owned window keep
-            // material samples independent of the user's desktop.
+            // the material independent of the user's desktop.
             let document = OverlayPreviewPanel(contentRect: NSRect(origin: origin, size: chosenSize).insetBy(dx: -40, dy: -40),
                 styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
             document.level = window.level
@@ -155,8 +178,7 @@ struct HoldOverlayVisualTests {
         if nativeCapture {
             let process = Process()
             process.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
-            // Capture only the owned window; notifications or other apps must
-            // never appear in documentation screenshots.
+            // Capture only the test-owned window, never the desktop or other apps.
             let prefix = size == nil ? "native-context-" : "native-"
             process.arguments = ["-x", "-o", "-l\(window.windowNumber)",
                 output.appendingPathComponent(prefix + name + ".png").path]

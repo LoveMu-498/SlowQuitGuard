@@ -10,6 +10,7 @@ struct ApplicationRulesView: View {
     let addApplications: (Bool) -> Void
     let setProtection: (Bool, String) -> Void
     let restoreDefault: (String) -> Void
+    let manageDurations: () -> Void
 
     private var duplicateNames: Set<String> {
         let grouped = Dictionary(grouping: protectedApplications + excludedApplications, by: \.name)
@@ -24,8 +25,8 @@ struct ApplicationRulesView: View {
             }
             .pickerStyle(.segmented)
             Text(mode == .blacklist
-                 ? "默认保护所有应用；“已排除应用”中的 App 除外。未列出的应用也受保护。"
-                 : "只保护“已保护应用”中的 App；其他应用按原来的方式退出。")
+                 ? "默认保护所有应用，已排除应用除外。"
+                 : "只保护“已保护应用”列表中的应用。")
                 .font(.callout).foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             HStack(alignment: .top, spacing: 16) {
@@ -33,12 +34,11 @@ struct ApplicationRulesView: View {
                 ruleColumn(title: "已排除应用", applications: excludedApplications, protected: false)
             }
             if mode == .whitelist && protectedApplications.isEmpty {
-                Label("白名单中尚无应用。添加后，才会对所选 App 启用长按退出。", systemImage: "info.circle")
+                Label("添加应用后启用长按保护。", systemImage: "info.circle")
                     .font(.callout).foregroundStyle(.secondary)
             }
             if let selectionMessage { Text(selectionMessage).font(.callout).foregroundStyle(.secondary) }
-            Text("名单会保存，与应用是否正在运行无关。排除应用后，本工具不拦截它的 ⌘Q。")
-                .font(.footnote).foregroundStyle(.secondary)
+            Button("自定义时长…", action: manageDurations)
         }
         .padding(20)
     }
@@ -50,8 +50,6 @@ struct ApplicationRulesView: View {
                     VStack(spacing: 10) {
                         Image(systemName: protected ? "checkmark.shield" : "shield.slash").font(.title)
                         Text("尚未添加应用")
-                        Text("使用下方按钮选择 App。")
-                            .font(.caption).foregroundStyle(.secondary)
                     }
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)

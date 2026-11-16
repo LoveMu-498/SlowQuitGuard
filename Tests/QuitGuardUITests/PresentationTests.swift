@@ -92,12 +92,12 @@ struct PresentationTests {
         for mode in ApplicationProtectionRules.Mode.allCases {
             try await render(ApplicationRulesView(mode: .constant(mode), protectedApplications: protected,
                 excludedApplications: excluded, selectionMessage: nil, addApplications: { _ in },
-                setProtection: { _, _ in }, restoreDefault: { _ in }),
+                setProtection: { _, _ in }, restoreDefault: { _ in }, manageDurations: {}),
                 size: NSSize(width: 840, height: 540), name: "application-rules-" + mode.rawValue + "-0.3.0")
         }
         try await render(ApplicationRulesView(mode: .constant(.whitelist), protectedApplications: [],
             excludedApplications: [], selectionMessage: nil, addApplications: { _ in },
-            setProtection: { _, _ in }, restoreDefault: { _ in }),
+            setProtection: { _, _ in }, restoreDefault: { _ in }, manageDurations: {}),
             size: NSSize(width: 840, height: 540), name: "application-rules-empty-0.3.0")
         let duplicateApplications = [
             StoredApplication(bundleID: "example.chat.personal", name: "微信", path: nil),
@@ -105,7 +105,7 @@ struct PresentationTests {
             StoredApplication(bundleID: "example.editor", name: "文本编辑与一个名称较长的应用", path: nil)]
         try await render(ApplicationRulesView(mode: .constant(.blacklist), protectedApplications: duplicateApplications,
             excludedApplications: excluded, selectionMessage: nil, addApplications: { _ in },
-            setProtection: { _, _ in }, restoreDefault: { _ in }),
+            setProtection: { _, _ in }, restoreDefault: { _ in }, manageDurations: {}),
             size: NSSize(width: 680, height: 430), name: "application-rules-compact-dark-0.3.0", dark: true)
         try await render(PermissionGuideView(stage: .posting, protectionPaused: false, openSettings: { _ in },
             checkAndContinue: {}, close: {}, access: .init(accessibility: true, eventPosting: false, inputMonitoring: false),

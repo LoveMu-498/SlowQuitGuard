@@ -32,6 +32,24 @@ private func send(
     #expect(approval?.startedAt == 10)
 }
 
+@Test(arguments: [0.6, 1, 2.5])
+func savedAppDurationDeterminesDeadlineAndFeedback(seconds: Double) throws {
+    var machine = HoldStateMachine()
+    let suppressed = machine.handle(.init(.down, keyCode: q, modifiers: [.command]), now: 0,
+        target: app, qKeyCodes: [q], enabled: true, duration: seconds, globalDuration: 1)
+    #expect(suppressed)
+    let hold = try #require(machine.hold)
+    let relation: HoldDurationRelation = seconds == 1 ? .standard : (seconds < 1 ? .shorter : .longer)
+    #expect(hold.durationRelation == relation)
+    #expect(machine.approveIfDue(now: seconds - 0.01, target: app, shortcutStillHeld: true, enabled: true) == nil)
+    #expect(machine.approveIfDue(now: seconds, target: app, shortcutStillHeld: true, enabled: true) == hold)
+}
+
+@Test func equalSliderAndSavedTenthsUseStandardFeedback() {
+    let session = HoldSession(target: app, keyCode: q, startedAt: 0, duration: 0.6, globalDuration: 0.6.nextUp)
+    #expect(session.durationRelation == .standard)
+}
+
 @Test func oneHoldCannotApproveTwiceOrRestartFromRepeats() {
     var machine = HoldStateMachine()
     _ = send(&machine)
@@ -197,4 +215,21 @@ func otherCommandCombinationsPassThrough(extra: KeyModifiers) {
     #expect(machine.approveIfDue(now: 11, target: app, shortcutStillHeld: true, enabled: false) == nil)
     #expect(send(&machine, .up, enabled: false))
     #expect(!send(&machine, time: 12, enabled: false))
+}
+
+@Test func popupFocusChangeDrainsRepeatsUntilReleaseThenAllowsBrowserRetry() {
+    var machine = HoldStateMachine()
+    #expect(send(&machine, target: otherApp))
+    // A popup takes focus, then focus returns before the user releases Q.
+    #expect(send(&machine, time: 10.2, target: app, repeating: true))
+    #expect(machine.hold == nil)
+    for time in [10.3, 10.5, 11.2] {
+        #expect(send(&machine, time: time, target: otherApp, repeating: true))
+        #expect(machine.hold == nil)
+        #expect(machine.approveIfDue(now: time, target: otherApp, shortcutStillHeld: true, enabled: true) == nil)
+    }
+    #expect(send(&machine, .up, time: 11.3, target: otherApp))
+    #expect(send(&machine, time: 11.4, target: otherApp))
+    #expect(machine.hold?.startedAt == 11.4)
+    #expect(machine.approveIfDue(now: 12.5, target: otherApp, shortcutStillHeld: true, enabled: true)?.target == otherApp)
 }

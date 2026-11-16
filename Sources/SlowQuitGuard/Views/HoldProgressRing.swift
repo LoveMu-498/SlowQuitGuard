@@ -79,7 +79,12 @@ final class HoldRingTrack: NSView {
     private func updateColors() {
         effectiveAppearance.performAsCurrentDrawingAppearance {
             track.strokeColor = NSColor.labelColor.withAlphaComponent(increasedContrast ? 0.38 : 0.14).cgColor
-            let color: NSColor = phase == .completed ? .systemGreen : (phase == .failed ? .systemOrange : .systemBlue)
+            let color: NSColor = switch (phase, session?.durationRelation) {
+            case (.completed, _): .systemGreen
+            case (.failed, _), (.holding, .shorter): .systemOrange
+            case (.holding, .longer): .systemTeal
+            default: .systemBlue
+            }
             fill.strokeColor = color.cgColor
         }
     }

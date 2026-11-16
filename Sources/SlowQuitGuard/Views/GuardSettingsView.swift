@@ -1,7 +1,9 @@
+import QuitGuardCore
 import SwiftUI
 
 struct GuardSettingsView: View {
     @Bindable var model: ProtectionModel
+    @State private var showsApplicationDurations = false
 
     var body: some View {
         TabView(selection: $model.settingsTab) {
@@ -12,7 +14,8 @@ struct GuardSettingsView: View {
                 .tabItem { Label("应用保护", systemImage: "checkmark.square") }
                 .tag(GuardSettingsTab.applications)
             SoundSettingsView(preferences: Binding(get: { model.soundSettings.preferences },
-                set: { model.soundSettings.preferences = $0 }), preview: model.previewSound)
+                set: model.updateSoundPreferences), preview: model.previewSound,
+                previewEncouragement: model.previewEncouragement, previewDurationCue: model.previewDurationCue)
                 .tabItem { Label("声音", systemImage: "speaker.wave.2") }
                 .tag(GuardSettingsTab.sounds)
         }
@@ -45,20 +48,20 @@ struct GuardSettingsView: View {
 
             Section("长按退出") {
                 Toggle("启用防误触保护", isOn: $model.enabled)
-                LabeledContent("按住时长", value: model.durationLabel)
-                Slider(value: $model.holdDuration, in: 0.5...3, step: 0.1) {
-                    Text("按住时长")
+                Slider(value: $model.holdDuration, in: HoldDuration.range, step: HoldDuration.step) {
+                    Text("全局时长 " + model.durationLabel)
                 } minimumValueLabel: { Text("0.5 秒") }
                   maximumValueLabel: { Text("3 秒") }
-                Text("松开 ⌘ 或 Q、按下其他键，或切换应用，都会取消本次长按。应用仍可提示保存，或由你取消退出。")
+                .accessibilityLabel("全局时长")
+                .accessibilityValue(model.durationLabel)
+                Text("松开按键或切换应用可取消长按。")
                     .font(.callout).foregroundStyle(.secondary)
             }
 
             Section {
                 Button("修复保护", action: model.repairProtection)
                     .disabled(!model.enabled)
-                Text("⌘Q 表现异常时使用。取消本次长按，检查权限并重新连接键盘监听；不改变应用名单。")
-                    .font(.callout).foregroundStyle(.secondary)
+                    .help("重新连接键盘保护")
                 DisclosureGroup("连接详情") {
                     LabeledContent("拦截退出快捷键", value: model.snapshot.accessibilityGranted ? "已授权" : "未授权")
                     LabeledContent("发送退出快捷键", value: model.snapshot.postingGranted ? "已允许" : "未允许")
@@ -74,7 +77,7 @@ struct GuardSettingsView: View {
                 version: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "开发构建",
                 state: model.displayState, snapshot: model.snapshot,
                 mode: model.protectionMode == .blacklist ? "默认保护（黑名单）" : "仅保护所选（白名单）"))
-            Text("仅保护键盘 ⌘Q。菜单退出、Dock 退出和强制退出仍按系统原有方式工作。")
+            Text("仅保护键盘 ⌘Q，菜单和 Dock 退出不受影响。")
                 .font(.footnote).foregroundStyle(.secondary)
         }
         .formStyle(.grouped)
@@ -85,7 +88,11 @@ struct GuardSettingsView: View {
             protectedApplications: model.protectedApplications, excludedApplications: model.excludedApplications,
             selectionMessage: model.applicationSelectionMessage,
             addApplications: model.chooseApplications,
-            setProtection: { model.setProtection($0, for: $1) }, restoreDefault: model.restoreDefault)
+            setProtection: { model.setProtection($0, for: $1) }, restoreDefault: model.restoreDefault,
+            manageDurations: { showsApplicationDurations = true })
+            .sheet(isPresented: $showsApplicationDurations) {
+                ApplicationHoldDurationSettings(model: model)
+            }
     }
 
     @ViewBuilder private var permissionAction: some View {

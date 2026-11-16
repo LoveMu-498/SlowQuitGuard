@@ -41,17 +41,64 @@ public struct FeedbackSoundPreference: Equatable, Codable, Sendable {
         try values.encode(volume, forKey: .volume)
     }
 
-    private static func clamped(_ value: Double) -> Double {
+    fileprivate static func clamped(_ value: Double) -> Double {
         value.isFinite ? min(1, max(0, value)) : 0
     }
 }
 
 public struct FeedbackPreferences: Equatable, Codable, Sendable {
+    public static let defaultEncouragementVolume = 0.12
+    public var encouragementEnabled = false
+    private var storedEncouragementVolume = Self.defaultEncouragementVolume
+    public var encouragementVolume: Double {
+        get { storedEncouragementVolume }
+        set { storedEncouragementVolume = FeedbackSoundPreference.clamped(newValue) }
+    }
+    public static let defaultDurationCueVolume = 0.12
+    public var durationCueEnabled = true
+    private var storedDurationCueVolume = Self.defaultDurationCueVolume
+    public var durationCueVolume: Double {
+        get { storedDurationCueVolume }
+        set { storedDurationCueVolume = FeedbackSoundPreference.clamped(newValue) }
+    }
     public var success = FeedbackSoundPreference(tone: .softRise, volume: 0.12)
     public var cancellation = FeedbackSoundPreference(tone: .softTap, volume: 0.08)
     public var failure = FeedbackSoundPreference(tone: .lowDouble, volume: 0.30)
 
     public init() {}
+
+    private enum CodingKeys: String, CodingKey {
+        case encouragementEnabled, encouragementVolume, durationCueEnabled, durationCueVolume
+        case success, cancellation, failure
+    }
+
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        encouragementEnabled = try values.decodeIfPresent(Bool.self, forKey: .encouragementEnabled) ?? false
+        encouragementVolume = try values.decodeIfPresent(Double.self, forKey: .encouragementVolume) ?? Self.defaultEncouragementVolume
+        durationCueEnabled = try values.decodeIfPresent(Bool.self, forKey: .durationCueEnabled) ?? true
+        durationCueVolume = try values.decodeIfPresent(Double.self, forKey: .durationCueVolume) ?? Self.defaultDurationCueVolume
+        success = try values.decode(FeedbackSoundPreference.self, forKey: .success)
+        cancellation = try values.decode(FeedbackSoundPreference.self, forKey: .cancellation)
+        failure = try values.decode(FeedbackSoundPreference.self, forKey: .failure)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var values = encoder.container(keyedBy: CodingKeys.self)
+        try values.encode(encouragementEnabled, forKey: .encouragementEnabled)
+        try values.encode(encouragementVolume, forKey: .encouragementVolume)
+        try values.encode(durationCueEnabled, forKey: .durationCueEnabled)
+        try values.encode(durationCueVolume, forKey: .durationCueVolume)
+        try values.encode(success, forKey: .success)
+        try values.encode(cancellation, forKey: .cancellation)
+        try values.encode(failure, forKey: .failure)
+    }
+
+    public mutating func resetEncouragementVolume() { encouragementVolume = Self.defaultEncouragementVolume }
+
+    public mutating func resetVolume(for kind: HoldFeedbackKind) {
+        self[kind].volume = FeedbackPreferences()[kind].volume
+    }
 
     public subscript(_ kind: HoldFeedbackKind) -> FeedbackSoundPreference {
         get {

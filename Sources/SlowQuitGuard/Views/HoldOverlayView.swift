@@ -38,7 +38,19 @@ struct HoldOverlayView: View {
                     Text("保护已中断").font(.system(size: 16, weight: .medium)).foregroundStyle(.orange)
                     Text("请松开快捷键后重试").font(.system(size: 13)).foregroundStyle(.secondary)
                 } else {
-                    if let session = model.session { RemainingHoldTime(session: session) }
+                    if let session = model.session {
+                        switch session.durationRelation {
+                        case .shorter:
+                            Text("较短时长 " + ProtectionModel.durationLabel(session.duration))
+                                .font(.system(size: 13, weight: .medium))
+                        case .longer:
+                            Text("较长时长 " + ProtectionModel.durationLabel(session.duration))
+                                .font(.system(size: 13, weight: .medium))
+                        case .standard:
+                            EmptyView()
+                        }
+                        RemainingHoldTime(session: session)
+                    }
                     Text("松开 ⌘ 或 Q 可取消").font(.system(size: 13)).foregroundStyle(.secondary)
                 }
             }
@@ -88,9 +100,11 @@ private struct RemainingHoldTime: View {
             let tenths = session.remainingTenths(at: now)
             Group {
                 if tenths > 0 {
-                    (Text("按住 ⌘Q · ") +
-                     Text("剩余 " + (Double(tenths) / 10).formatted(.number.precision(.fractionLength(1))) + " 秒")
-                        .foregroundColor(.blue))
+                    HStack(spacing: 8) {
+                        Text("按住 ⌘Q")
+                        Text("剩余 " + ProtectionModel.durationLabel(Double(tenths) / 10))
+                    }
+                    .foregroundStyle(session.durationRelation == .standard ? Color.blue : Color.primary)
                 } else { Text("正在处理退出请求…") }
             }
             .font(.system(size: 15, weight: .medium))

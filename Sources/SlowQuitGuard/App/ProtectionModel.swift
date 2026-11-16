@@ -10,13 +10,13 @@ import UniformTypeIdentifiers
 final class ProtectionModel {
     var enabled: Bool {
         didSet {
-            UserDefaults.standard.set(enabled, forKey: "protectionEnabled")
+            defaults.set(enabled, forKey: "protectionEnabled")
             updatePolicy()
         }
     }
     var holdDuration: Double {
         didSet {
-            UserDefaults.standard.set(holdDuration, forKey: "holdDuration")
+            defaults.set(holdDuration, forKey: "holdDuration")
             updatePolicy()
         }
     }
@@ -33,8 +33,10 @@ final class ProtectionModel {
     var settingsTab: GuardSettingsTab = .general
     private var rules: ApplicationProtectionRules
     private var storedApplications: [String: StoredApplication]
+    private var applicationDurations: [String: ApplicationHoldDuration]
     var applicationSelectionMessage: String?
 
+    @ObservationIgnored private let defaults: UserDefaults
     @ObservationIgnored private var service: EventTapService?
     @ObservationIgnored private var observers: [NSObjectProtocol] = []
     @ObservationIgnored private var layoutObserver: NSObjectProtocol?
@@ -46,17 +48,22 @@ final class ProtectionModel {
     @ObservationIgnored private var menuObserver: NSObjectProtocol?
     @ObservationIgnored private var menuBeginObserver: NSObjectProtocol?
 
-    init() {
-        let defaults = UserDefaults.standard
+    init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
         enabled = defaults.object(forKey: "protectionEnabled") as? Bool ?? true
         let storedDuration = defaults.double(forKey: "holdDuration")
-        holdDuration = storedDuration.isFinite && (0.5...3).contains(storedDuration) ? storedDuration : 1
+        holdDuration = HoldDuration.range.contains(storedDuration) ? storedDuration : HoldDuration.defaultValue
         let mode = ApplicationProtectionRules.Mode(rawValue: defaults.string(forKey: "protectionMode") ?? "") ?? .blacklist
         rules = ApplicationProtectionRules(mode: mode,
             protectedBundleIDs: Set(defaults.stringArray(forKey: "protectedBundleIDs") ?? []),
             excludedBundleIDs: Set(defaults.stringArray(forKey: "excludedBundleIDs") ?? []))
         let records = defaults.data(forKey: "applicationRecords").flatMap { try? JSONDecoder().decode([StoredApplication].self, from: $0) } ?? []
         storedApplications = Dictionary(records.map { ($0.bundleID, $0) }, uniquingKeysWith: { _, newer in newer })
+        let durations = defaults.data(forKey: "applicationHoldDurations").flatMap {
+            try? JSONDecoder().decode([ApplicationHoldDuration].self, from: $0)
+        } ?? []
+        applicationDurations = Dictionary(durations.filter { HoldDuration.tenthsRange.contains($0.tenths) }
+            .map { ($0.id, $0) }, uniquingKeysWith: { _, newer in newer })
     }
 
     var displayState: ProtectionState {
@@ -71,17 +78,46 @@ final class ProtectionModel {
     }
     var protectedApplications: [StoredApplication] { records(for: rules.protectedBundleIDs) }
     var excludedApplications: [StoredApplication] { records(for: rules.excludedBundleIDs) }
-    var currentAppExcluded: Bool {
-        frontmostTarget.map { !rules.isProtected($0.identity.bundleID) } ?? false
-    }
     var excludedBundleIDs: [String] { rules.excludedBundleIDs.sorted() }
-    var durationLabel: String { holdDuration.formatted(.number.precision(.fractionLength(1))) + " 秒" }
+    var durationLabel: String { Self.durationLabel(holdDuration) }
+
+    static func durationLabel(_ seconds: Double) -> String {
+        seconds.formatted(.number.precision(.fractionLength(1))) + " 秒"
+    }
+
+    var customApplicationDurations: [ApplicationHoldDuration] {
+        applicationDurations.values.sorted {
+            let order = $0.application.name.localizedStandardCompare($1.application.name)
+            return order == .orderedSame ? $0.id < $1.id : order == .orderedAscending
+        }
+    }
+
+    func customDuration(for bundleID: String) -> ApplicationHoldDuration? { applicationDurations[bundleID] }
+
+    func durationLabel(for bundleID: String) -> String {
+        Self.durationLabel(customDuration(for: bundleID)?.duration ?? holdDuration)
+    }
+
+    func saveDuration(_ tenths: Int?, for application: StoredApplication) {
+        if let tenths {
+            guard HoldDuration.tenthsRange.contains(tenths) else { return }
+            let value = ApplicationHoldDuration(application: application, tenths: tenths)
+            guard applicationDurations[value.id] != value else { return }
+            applicationDurations[value.id] = value
+        } else {
+            guard applicationDurations.removeValue(forKey: application.bundleID) != nil else { return }
+        }
+        if let data = try? JSONEncoder().encode(Array(applicationDurations.values)) {
+            defaults.set(data, forKey: "applicationHoldDurations")
+        }
+        updatePolicy()
+    }
 
     func start() {
         guard service == nil else { return }
         overlay.warmUp()
         prepareMenu()
-        let worker = EventTapService(policy: makePolicy()) { [weak self] value in
+        let worker = EventTapService(policy: makePolicy(for: frontmostTarget)) { [weak self] value in
             Task { @MainActor [weak self] in
                 guard let self, self.service != nil, value.revision > self.snapshot.revision else { return }
                 self.snapshot = value
@@ -92,7 +128,11 @@ final class ProtectionModel {
                     eventPosting: value.postingGranted, inputMonitoring: value.listeningGranted),
                     inputMonitoringRequired: needsInput)
                 let now = Double(DispatchTime.now().uptimeNanoseconds) / 1_000_000_000
-                self.feedbackSounds.handle(value.feedback, preferences: self.soundSettings.preferences, now: now)
+                let preferences = self.soundSettings.preferences
+                self.feedbackSounds.updateHold(value.state == .ready ? value.holdPresentation : nil,
+                    enabled: preferences.encouragementEnabled, volume: preferences.encouragementVolume, now: now,
+                    durationCueVolume: preferences.durationCueEnabled ? preferences.durationCueVolume : 0)
+                self.feedbackSounds.handle(value.feedback, preferences: preferences, now: now)
             }
         }
         service = worker
@@ -157,6 +197,23 @@ final class ProtectionModel {
 
     func previewSound(_ preference: FeedbackSoundPreference) { feedbackSounds.preview(preference) }
 
+    func previewEncouragement() {
+        feedbackSounds.previewEncouragement(duration: holdDuration, volume: soundSettings.preferences.encouragementVolume)
+    }
+
+    func previewDurationCue(_ relation: HoldDurationRelation) {
+        feedbackSounds.previewDurationCue(relation, volume: soundSettings.preferences.durationCueVolume)
+    }
+
+    func updateSoundPreferences(_ preferences: FeedbackPreferences) {
+        soundSettings.preferences = preferences
+        feedbackSounds.updateHold(snapshot.state == .ready ? snapshot.holdPresentation : nil,
+            enabled: preferences.encouragementEnabled,
+            volume: preferences.encouragementVolume,
+            now: Double(DispatchTime.now().uptimeNanoseconds) / 1_000_000_000,
+            durationCueVolume: preferences.durationCueEnabled ? preferences.durationCueVolume : 0)
+    }
+
     func prepareMenu() {
         updateApplications()
     }
@@ -194,13 +251,8 @@ final class ProtectionModel {
     }
 
     func chooseApplications(protected: Bool) {
-        let panel = NSOpenPanel()
-        panel.allowedContentTypes = [.applicationBundle]
+        let panel = applicationPicker()
         panel.allowsMultipleSelection = true
-        panel.canChooseFiles = true
-        panel.canChooseDirectories = false
-        panel.treatsFilePackagesAsDirectories = false
-        panel.directoryURL = URL(fileURLWithPath: "/Applications", isDirectory: true)
         panel.prompt = "添加"
         panel.message = protected ? "选择要加入“已保护应用”的 App" : "选择要加入“已排除应用”的 App"
         panel.begin { [weak self] response in
@@ -219,6 +271,27 @@ final class ProtectionModel {
         }
     }
 
+    func chooseApplicationForDuration(_ selected: @escaping (StoredApplication?) -> Void) {
+        let panel = applicationPicker()
+        panel.prompt = "选择"
+        panel.begin { response in
+            Task { @MainActor in
+                guard response == .OK else { return }
+                selected(panel.url.flatMap { ApplicationCatalog.record(for: $0) })
+            }
+        }
+    }
+
+    private func applicationPicker() -> NSOpenPanel {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.applicationBundle]
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.treatsFilePackagesAsDirectories = false
+        panel.directoryURL = URL(fileURLWithPath: "/Applications", isDirectory: true)
+        return panel
+    }
+
     private func records(for ids: Set<String>) -> [StoredApplication] {
         ids.map { id in
             if let current = NSWorkspace.shared.urlForApplication(withBundleIdentifier: id), let record = ApplicationCatalog.record(for: current) { return record }
@@ -227,7 +300,6 @@ final class ProtectionModel {
     }
 
     private func saveRules() {
-        let defaults = UserDefaults.standard
         defaults.set(rules.mode.rawValue, forKey: "protectionMode")
         defaults.set(rules.protectedBundleIDs.sorted(), forKey: "protectedBundleIDs")
         defaults.set(rules.excludedBundleIDs.sorted(), forKey: "excludedBundleIDs")
@@ -259,13 +331,14 @@ final class ProtectionModel {
         menuTargetIsPrevious = frontmostTarget == nil && previous != nil
     }
 
-    private func makePolicy() -> RuntimePolicy {
-        let protectedTarget = currentAppExcluded ? nil : frontmostTarget
-        return RuntimePolicy(enabled: enabled, duration: holdDuration,
+    func makePolicy(for target: QuitTarget?) -> RuntimePolicy {
+        let protectedTarget = target.flatMap { isProtected($0.identity.bundleID) ? $0 : nil }
+        return RuntimePolicy(enabled: enabled, globalDuration: holdDuration,
                              sessionActive: awake && sessionActive,
                              target: protectedTarget, qKeyCodes: qKeyCodes,
-                             unprotectedTarget: currentAppExcluded ? frontmostTarget : nil)
+                             unprotectedTarget: protectedTarget == nil ? target : nil,
+                             customDuration: protectedTarget.flatMap { customDuration(for: $0.identity.bundleID)?.duration })
     }
 
-    private func updatePolicy() { service?.updatePolicy(makePolicy()) }
+    private func updatePolicy() { service?.updatePolicy(makePolicy(for: frontmostTarget)) }
 }

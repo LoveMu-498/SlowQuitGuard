@@ -4,11 +4,14 @@ import QuitGuardCore
 
 struct RuntimePolicy: Equatable, Sendable {
     var enabled: Bool
-    var duration: Double
+    var globalDuration: Double
     var sessionActive: Bool
     var target: QuitTarget?
     var qKeyCodes: Set<UInt16>
     var unprotectedTarget: QuitTarget? = nil
+    var customDuration: Double? = nil
+
+    var duration: Double { customDuration ?? globalDuration }
 }
 
 enum ProtectionState: Equatable, Sendable {
@@ -95,8 +98,11 @@ enum GuardSettingsTab: Hashable {
 
 enum CurrentApplication {
     static func target() -> QuitTarget? {
-        guard let app = NSWorkspace.shared.frontmostApplication,
-              app.activationPolicy == .regular, !app.isTerminated,
+        NSWorkspace.shared.frontmostApplication.flatMap { target(for: $0) }
+    }
+
+    static func target(for app: NSRunningApplication) -> QuitTarget? {
+        guard app.activationPolicy == .regular, !app.isTerminated,
               let bundleID = app.bundleIdentifier,
               bundleID != Bundle.main.bundleIdentifier,
               bundleID != "com.apple.finder",

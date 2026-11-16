@@ -57,12 +57,15 @@ public struct HoldSession: Equatable, Sendable {
     public let keyCode: UInt16
     public let startedAt: Double
     public let duration: Double
+    public let durationRelation: HoldDurationRelation
 
-    public init(target: QuitTarget, keyCode: UInt16, startedAt: Double, duration: Double) {
+    public init(target: QuitTarget, keyCode: UInt16, startedAt: Double, duration: Double,
+                globalDuration: Double? = nil) {
         self.target = target
         self.keyCode = keyCode
         self.startedAt = startedAt
         self.duration = duration
+        durationRelation = .init(duration: duration, globalDuration: globalDuration)
     }
 
     public func progress(at now: Double) -> Double {
@@ -106,7 +109,8 @@ public struct HoldStateMachine: Sendable {
         target: QuitTarget?,
         qKeyCodes: Set<UInt16>,
         enabled: Bool,
-        duration: Double
+        duration: Double,
+        globalDuration: Double? = nil
     ) -> Bool {
         if input.kind == .modifiersChanged && !input.modifiers.contains(.command) {
             appSwitcherActive = false
@@ -140,7 +144,8 @@ public struct HoldStateMachine: Sendable {
             }
             phase = .holding(HoldSession(
                 target: target, keyCode: input.keyCode,
-                startedAt: now, duration: min(3, max(0.5, duration))
+                startedAt: now, duration: min(HoldDuration.range.upperBound, max(HoldDuration.range.lowerBound, duration)),
+                globalDuration: globalDuration
             ))
             return true
 

@@ -9,6 +9,7 @@ BUNDLE_ID="org.slowquitguard.SlowQuitGuard"
 MODE="run"
 CONFIGURATION="debug"
 STAGED="false"
+SIGNING_IDENTITY="${SLOWQUITGUARD_SIGNING_IDENTITY:--}"
 
 for argument in "$@"; do
   case "$argument" in
@@ -63,6 +64,10 @@ fi
 mkdir -p "$APP_BUNDLE/Contents/MacOS" "$APP_BUNDLE/Contents/Resources"
 cp "$BIN_DIR/$APP_NAME" "$APP_BUNDLE/Contents/MacOS/$APP_NAME"
 chmod +x "$APP_BUNDLE/Contents/MacOS/$APP_NAME"
+if [[ "$CONFIGURATION" == "release" ]]; then
+  # Do not distribute the build host’s paths in the debug symbol table.
+  /usr/bin/strip -S -x "$APP_BUNDLE/Contents/MacOS/$APP_NAME"
+fi
 cp "$ROOT_DIR/Resources/Info.plist" "$APP_BUNDLE/Contents/Info.plist"
 mkdir -p "$APP_BUNDLE/Contents/Resources/Sounds"
 for cue in softRise softTap lowDouble; do
@@ -72,7 +77,7 @@ done
 ICON_SET="$ROOT_DIR/.build/SlowQuitGuard.iconset"
 xcrun swift -module-cache-path "$ROOT_DIR/.build/ModuleCache" "$ROOT_DIR/script/generate_icon.swift" "$ICON_SET"
 /usr/bin/iconutil -c icns "$ICON_SET" -o "$APP_BUNDLE/Contents/Resources/AppIcon.icns"
-/usr/bin/codesign --force --sign - --timestamp=none --options runtime "$APP_BUNDLE"
+/usr/bin/codesign --force --sign "$SIGNING_IDENTITY" --timestamp=none --options runtime "$APP_BUNDLE"
 /usr/bin/codesign --verify --deep --strict "$APP_BUNDLE"
 /usr/bin/plutil -lint "$APP_BUNDLE/Contents/Info.plist"
 

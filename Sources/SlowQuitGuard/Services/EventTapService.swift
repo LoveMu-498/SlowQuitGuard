@@ -51,14 +51,25 @@ final class EventTapService: @unchecked Sendable {
     }
 
     func updatePolicy(_ value: RuntimePolicy) {
-        let changed = lock.withLock {
-            guard policy != value else { return false }
+        // Before the worker starts there is no hold to cancel. Keep startup
+        // changes instead of dropping them because its run loop is not ready.
+        let appliedBeforeStart = lock.withLock {
+            guard workerLoop == nil else { return false }
             policy = value
             return true
         }
-        guard changed else { return }
+        guard !appliedBeforeStart else { return }
+        // Apply the new target and cancel its predecessor in the same worker
+        // turn. Publishing policy on the caller thread could otherwise let a
+        // new hold start before this queued cancellation runs.
         perform { [self] in
-            cancelHold(reason: cancellationReason(policy: currentPolicy))
+            let changed = lock.withLock {
+                guard policy != value else { return false }
+                policy = value
+                return true
+            }
+            guard changed else { return }
+            cancelHold(reason: cancellationReason(policy: value))
             refresh()
         }
     }
@@ -250,12 +261,15 @@ final class EventTapService: @unchecked Sendable {
         let suppress = machine.handle(input, now: Self.now, target: policy.target,
             qKeyCodes: policy.qKeyCodes,
             enabled: policy.enabled && policy.sessionActive && snapshot.state == .ready,
-            duration: policy.duration)
+            duration: policy.duration, globalDuration: policy.globalDuration)
         if before != machine.hold {
             if machine.hold == nil {
-                recordFeedback(.cancellation, session: before, reason: cancellationReason(policy: policy, input: input))
+                recordFeedback(.cancellation, session: before, reason: cancellationReason(policy: policy, input: input, session: before))
             }
             originalQuitEvent = machine.hold == nil ? nil : event.copy()
+            if let session = machine.hold {
+                logger.notice("Hold started: start=\(session.startedAt) duration=\(session.duration)")
+            }
             updateHoldPresentation()
         } else if before == nil, !suppress, input.kind == .down, !input.isRepeat,
                   input.modifiers == [.command], policy.qKeyCodes.contains(keyCode),
@@ -263,6 +277,9 @@ final class EventTapService: @unchecked Sendable {
                   snapshot.state == .ready, let target = policy.unprotectedTarget {
             snapshot.lastShortcut = .init(reason: .unprotectedApplication, occurredAt: Date(), applicationName: target.name)
             publish()
+        }
+        if !suppress, input.kind == .down, input.modifiers == [.command], policy.qKeyCodes.contains(keyCode) {
+            logger.notice("Quit shortcut passed through: repeat=\(input.isRepeat) switcher=\(self.machine.appSwitcherActive) state=\(self.snapshot.state.title, privacy: .public)")
         }
         return suppress ? nil : Unmanaged.passUnretained(event)
     }
@@ -299,13 +316,14 @@ final class EventTapService: @unchecked Sendable {
             snapshot.feedback = feedback
             let resolved = reason ?? (kind == .success ? .requestSent : (kind == .failure ? .listenerInterrupted : .releasedEarly))
             snapshot.lastShortcut = .init(reason: resolved, occurredAt: Date(), applicationName: session?.target.name)
+            logger.notice("Hold ended: sequence=\(feedback.sequence) outcome=\(kind.rawValue, privacy: .public) reason=\(resolved.rawValue, privacy: .public) start=\(feedback.session.startedAt)")
         }
     }
 
-    private func cancellationReason(policy: RuntimePolicy, input: KeyInput? = nil) -> ShortcutReason {
+    private func cancellationReason(policy: RuntimePolicy, input: KeyInput? = nil, session: HoldSession? = nil) -> ShortcutReason {
         if !policy.enabled { return .protectionPaused }
         if !policy.sessionActive { return .sessionPaused }
-        if let session = machine.hold, policy.target?.identity != session.target.identity { return .applicationChanged }
+        if let session = session ?? machine.hold, policy.target?.identity != session.target.identity { return .applicationChanged }
         if let input {
             return input.kind == .up || !input.modifiers.contains(.command) ? .releasedEarly : .anotherKey
         }
@@ -351,25 +369,12 @@ final class EventTapService: @unchecked Sendable {
         let healthy = authorized && !secureInput && listening
         let approval = machine.approveIfDue(now: now, target: actualTarget,
             shortcutStillHeld: shortcutIsHeld(hold.keyCode), enabled: operational && healthy)
-        let original = originalQuitEvent
         var sentSession: HoldSession?
-        if let approval, let original,
-           let down = original.copy(), let up = original.copy(),
-           let replaySource = CGEventSource(stateID: .privateState),
-           currentPolicy == policy, shortcutIsHeld(approval.keyCode),
-           CurrentApplication.target()?.identity == approval.target.identity {
-            down.type = .keyDown
-            up.type = .keyUp
-            for event in [down, up] {
-                event.setSource(replaySource)
-                event.setIntegerValueField(.eventSourceUserData, value: Self.eventTag)
-                event.setIntegerValueField(.keyboardEventAutorepeat, value: 0)
-                event.timestamp = DispatchTime.now().uptimeNanoseconds
-            }
-            down.postToPid(approval.target.identity.processID)
-            up.postToPid(approval.target.identity.processID)
+        if let approval, currentPolicy == policy, shortcutIsHeld(approval.keyCode),
+           let app = NSWorkspace.shared.frontmostApplication,
+           CurrentApplication.target(for: app)?.identity == approval.target.identity,
+           sendQuitRequest(to: app, originalEvent: originalQuitEvent) {
             sentSession = approval
-            logger.info("A normal quit shortcut was sent to the captured application.")
         }
         originalQuitEvent = nil
         let stillIntended = currentPolicy == policy && shortcutIsHeld(hold.keyCode) &&
@@ -384,11 +389,36 @@ final class EventTapService: @unchecked Sendable {
         if !healthy { refresh() }
     }
 
+    private func sendQuitRequest(to app: NSRunningApplication, originalEvent: CGEvent?) -> Bool {
+        // Chrome app shims can ignore a replayed key event sent directly to their PID.
+        if let bundleID = app.bundleIdentifier, bundleID.hasPrefix("com.google.Chrome."),
+           bundleID.contains(".app."), app.executableURL?.lastPathComponent == "app_mode_loader" {
+            let sent = app.terminate()
+            if sent { logger.info("A normal quit request was sent to the captured application.") }
+            return sent
+        }
+
+        guard let originalEvent, let down = originalEvent.copy(), let up = originalEvent.copy(),
+              let replaySource = CGEventSource(stateID: .privateState) else { return false }
+        down.type = .keyDown
+        up.type = .keyUp
+        for event in [down, up] {
+            event.setSource(replaySource)
+            event.setIntegerValueField(.eventSourceUserData, value: Self.eventTag)
+            event.setIntegerValueField(.keyboardEventAutorepeat, value: 0)
+            event.timestamp = DispatchTime.now().uptimeNanoseconds
+        }
+        down.postToPid(app.processIdentifier)
+        up.postToPid(app.processIdentifier)
+        logger.info("A normal quit shortcut was sent to the captured application.")
+        return true
+    }
+
     private func publish() {
         guard snapshot != lastPublished else { return }
         snapshot.revision += 1
         if snapshot.state != lastPublished?.state {
-            logger.info("Protection state: \(self.snapshot.state.title, privacy: .public)")
+            logger.notice("Protection state: \(self.snapshot.state.title, privacy: .public)")
         }
         lastPublished = snapshot
         onChange(snapshot)

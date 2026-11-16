@@ -17,9 +17,17 @@ struct SoundFeedbackTests {
         let store = SoundSettingsStore(load: { nil }, save: { saved = $0 })
         #expect(saved == nil)
         store.preferences[.success] = .init(enabled: false, tone: .lowDouble, volume: 0.27)
+        store.preferences.encouragementEnabled = true
+        store.preferences.encouragementVolume = 0.36
+        store.preferences.durationCueEnabled = false
+        store.preferences.durationCueVolume = 0.2
         let data = try #require(saved)
         let restored = SoundSettingsStore(load: { data }, save: { _ in Issue.record("Reading must not rewrite settings") })
         #expect(restored.preferences.success == store.preferences.success)
+        #expect(restored.preferences.encouragementEnabled)
+        #expect(restored.preferences.encouragementVolume == 0.36)
+        #expect(!restored.preferences.durationCueEnabled)
+        #expect(restored.preferences.durationCueVolume == 0.2)
         #expect(restored.preferences.cancellation == FeedbackPreferences().cancellation)
     }
 
